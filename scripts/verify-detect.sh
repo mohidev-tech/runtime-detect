@@ -13,7 +13,8 @@ NS="${NS:-runtime-detect}"
 echo "==> Port-forwarding Loki"
 kubectl -n "$NS" port-forward svc/loki 13100:3100 >/tmp/loki-pf.log 2>&1 &
 PF=$!
-trap "kill $PF 2>/dev/null || true" EXIT
+# Single-quote so $PF expands at trap-fire time (shellcheck SC2064).
+trap 'kill "$PF" 2>/dev/null || true' EXIT
 sleep 3
 
 echo "==> Running hunts (last 10m)"
