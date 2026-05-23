@@ -1,0 +1,38 @@
+# falcosecurity/falco helm values
+# https://github.com/falcosecurity/charts/tree/master/charts/falco
+#
+# We use the eBPF driver (no kernel module install needed) and ship every
+# event to falcosidekick, which fans them out to Loki + (optionally) Slack.
+
+driver:
+  kind: ebpf
+
+# Falco's own metrics — scraped by Prometheus if the kube-prometheus-stack
+# from the flagship is installed in the same cluster.
+metrics:
+  enabled: true
+
+# Reduce CPU/mem in lab; bump for production scale.
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: 1000m, memory: 1Gi }
+
+falco:
+  json_output: true            # structured logs — required for Loki + sidekick
+  json_include_output_property: true
+  log_syslog: false
+  log_stderr: true
+  http_output:
+    enabled: true
+    url: "http://falcosidekick.runtime-detect.svc.cluster.local:2801/"
+
+# Load our custom rules ALONGSIDE the upstream rule set. Upstream catches
+# the common patterns; ours add the K8s-specific signal we care about.
+falcoctl:
+  artifact:
+    install:
+      enabled: true
+      refs: [falco-rules:3]
+    follow:
+      enabled: true
+      refs: [falco-rules:3]

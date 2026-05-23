@@ -1,0 +1,135 @@
+# Custom Falco rules for this lab.
+#
+# Falco ships hundreds of default rules. These are five hand-picked rules
+# tuned for a Kubernetes app cluster — the goal is "noticeable signal,
+# minimal noise" rather than "catch everything." Each rule has a
+# corresponding scenario in scripts/attack-sim.sh that trips it.
+#
+# Severity follows Falco conventions:
+#   CRITICAL — almost certainly malicious or extremely bad ops hygiene
+#   WARNING  — suspicious; investigate
+#   NOTICE   — informational; useful for hunt queries
+
+customRules:
+  custom-rules.yaml: |-
+    - macro: app_namespaces
+      condition: (k8s.ns.name in (app, default))
+
+    - macro: known_kubectl_exec
+      condition: >-
+        (proc.pname in (kubectl, runc, containerd-shim)
+         or container.image.repository contains "kubectl")
+
+    # ---------------------------------------------------------------------
+    # 1. Interactive shell spawned inside an app container.
+    # Real attackers' first move after RCE is "spawn a shell." Legitimate
+    # ops should use a debug container or `kubectl debug`, not `kubectl exec`
+    # against prod, so this fires on real interactive shells.
+    # ---------------------------------------------------------------------
+    - rule: Shell spawned in app container
+      desc: >-
+        An interactive shell process (sh, bash, ash, fish) started inside a
+        container in the app namespace. This is the most common post-RCE
+        signal — anything that needs a shell at runtime should be flagged.
+      condition: >-
+        spawned_process
+        and container
+        and app_namespaces
+        and proc.name in (sh, bash, ash, dash, fish, zsh)
+      output: >-
+        Shell opened in app container
+        (user=%user.name pod=%k8s.pod.name container=%container.name
+         shell=%proc.name parent=%proc.pname cmd=%proc.cmdline)
+      priority: CRITICAL
+      tags: [container, shell, mitre_execution, mitre_T1059]
+
+    # ---------------------------------------------------------------------
+    # 2. Write below sensitive K8s paths.
+    # /var/run/secrets/kubernetes.io and /etc/kubernetes contain the
+    # service-account token + kubeconfigs. Writes there from inside a
+    # container are almost never legitimate; the file is mounted RO at
+    # spawn and shouldn't change.
+    # ---------------------------------------------------------------------
+    - rule: Write to K8s service-account directory
+      desc: >-
+        A process inside a container wrote to /var/run/secrets/kubernetes.io
+        or /etc/kubernetes. The SA token mount is supposed to be read-only.
+      condition: >-
+        open_write
+        and container
+        and (fd.name startswith "/var/run/secrets/kubernetes.io"
+             or fd.name startswith "/etc/kubernetes")
+      output: >-
+        Write to K8s secrets/config path
+        (user=%user.name pod=%k8s.pod.name container=%container.name
+         path=%fd.name cmd=%proc.cmdline)
+      priority: CRITICAL
+      tags: [k8s, secrets, mitre_persistence, mitre_T1098]
+
+    # ---------------------------------------------------------------------
+    # 3. Read of /etc/shadow inside a container.
+    # No legit container app reads /etc/shadow. If you see this, it's
+    # either a misconfigured init script or someone exploring after RCE.
+    # ---------------------------------------------------------------------
+    - rule: Sensitive file read inside container
+      desc: >-
+        A process inside a container opened /etc/shadow or /etc/sudoers
+        for reading. These files are not relevant to application code.
+      condition: >-
+        open_read
+        and container
+        and fd.name in (/etc/shadow, /etc/sudoers)
+      output: >-
+        Sensitive file read in container
+        (user=%user.name pod=%k8s.pod.name container=%container.name
+         file=%fd.name parent=%proc.pname cmd=%proc.cmdline)
+      priority: CRITICAL
+      tags: [credential_access, mitre_T1003]
+
+    # ---------------------------------------------------------------------
+    # 4. Outbound DNS to a known-bad domain.
+    # The list here is a sample (one OISINT IOC domain). In a real cluster
+    # this would be backed by threat-intel feeds via the falco-plugins-http
+    # plugin, refreshed periodically.
+    # ---------------------------------------------------------------------
+    - list: suspicious_domains
+      items: [example-malware.test, evil.attacker.invalid, beacon.test]
+
+    - rule: Outbound DNS to suspicious domain
+      desc: >-
+        A container resolved a domain on the suspicious_domains list.
+        Treat as IOC hit; investigate the pod's workload identity and
+        recent admission events for context.
+      condition: >-
+        (evt.type=connect or evt.type=sendto)
+        and container
+        and fd.sip != ""
+        and (fd.name in (suspicious_domains)
+             or fd.sport=53 and evt.arg.data contains "evil.attacker.invalid")
+      output: >-
+        Container resolved/dialed suspicious destination
+        (pod=%k8s.pod.name container=%container.name
+         dest=%fd.name port=%fd.sport)
+      priority: WARNING
+      tags: [network, threat_intel, mitre_command_and_control]
+
+    # ---------------------------------------------------------------------
+    # 5. New mount inside a container — common container-escape precursor.
+    # Privileged escape attempts often mount /, /proc, or a host path.
+    # Catching the mount syscall itself is more reliable than scanning for
+    # specific paths.
+    # ---------------------------------------------------------------------
+    - rule: Mount inside container
+      desc: >-
+        A mount syscall executed inside a container. Almost never legit
+        from inside an app container; common container-escape precursor.
+      condition: >-
+        evt.type=mount
+        and container
+        and not proc.name in (runc:[2:INIT], containerd-shim)
+      output: >-
+        Mount syscall in container
+        (pod=%k8s.pod.name container=%container.name
+         source=%evt.arg.source target=%evt.arg.target type=%evt.arg.filesystemtype)
+      priority: CRITICAL
+      tags: [container_escape, mitre_privilege_escalation, mitre_T1611]

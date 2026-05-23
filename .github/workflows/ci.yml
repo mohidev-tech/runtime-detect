@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+      - name: go mod tidy
+        working-directory: tools/hunt
+        run: go mod tidy
+      - name: go vet
+        working-directory: tools/hunt
+        run: go vet ./...
+      - name: go test
+        working-directory: tools/hunt
+        run: go test -race -count=1 ./...
+      - name: build hunt binary
+        working-directory: tools/hunt
+        run: go build -o /tmp/hunt ./cmd/hunt
+      - name: smoke — hunt list returns >0 hunts
+        run: |
+          /tmp/hunt list | grep -q "HUNT-001"
+
+  yamllint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          pip install --quiet yamllint
+          yamllint -d "{extends: relaxed, rules: {line-length: disable}}" deploy/
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y shellcheck
+      - run: shellcheck scripts/*.sh
+
+  # JSON sanity-check on the Grafana dashboard so we don't ship broken syntax.
+  jsonlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          for f in deploy/grafana/dashboards/*.json; do
+            python -c "import json,sys; json.load(open('$f')); print('OK: $f')"
+          done

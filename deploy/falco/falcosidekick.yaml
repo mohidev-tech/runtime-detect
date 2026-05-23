@@ -1,0 +1,25 @@
+# falcosidekick — event router. Receives Falco events on HTTP :2801 and
+# fans them out to Loki (always) and Slack (optional, requires a webhook
+# URL in the SLACK_WEBHOOK env var).
+#
+# https://github.com/falcosecurity/falcosidekick
+config:
+  debug: false
+  customfields: "cluster:devsecops-lab"
+
+  loki:
+    hostport: "http://loki.runtime-detect.svc.cluster.local:3100"
+    tenant: ""                 # set if multi-tenant Loki
+    minimumpriority: notice    # ship everything notice+; tune via Loki filters
+    extralabels: "rule,priority,k8s_ns_name,k8s_pod_name"
+
+  slack:
+    # If you supply a webhook via SLACK_WEBHOOK env, alerts route to Slack.
+    # Empty by default — uncomment + set env to enable.
+    # webhookurl: ""
+    minimumpriority: critical
+
+# Prometheus scrape of falcosidekick's own metrics — lets us track event
+# throughput, dropped events, and per-backend latency.
+serviceMonitor:
+  enabled: true

@@ -1,0 +1,23 @@
+runtime-detect
+Copyright 2026 mohidev-tech
+
+This product includes software developed at mohidev-tech (https://github.com/mohidev-tech).
+
+------------------------------------------------------------------------
+Third-party software referenced or installed at bootstrap time
+------------------------------------------------------------------------
+
+Hunt CLI: Go standard library only — BSD-3-Clause.
+
+Platform components installed by bootstrap.sh:
+
+* Falco                Apache License 2.0  https://falco.org/
+* Falcosidekick        Apache License 2.0  https://github.com/falcosecurity/falcosidekick
+* Grafana Loki         AGPLv3              https://github.com/grafana/loki
+* Grafana              AGPLv3              https://github.com/grafana/grafana  (installed via the flagship kube-prometheus-stack; not bundled here)
+
+Image bases:
+
+* alpine:3.20          MIT-style           Used ONLY in the attack-sim target pod, because tripping rules requires a shell
+
+The Linux kernel and eBPF runtime carry their own licenses (GPLv2 etc.).
